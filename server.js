@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin using environment variables
+// Initialize Firebase Admin (your existing code)
 admin.initializeApp({
   credential: admin.credential.cert({
     type: "service_account",
@@ -23,18 +23,43 @@ admin.initializeApp({
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware - Updated CORS for production
+// FIXED CORS Configuration
 const corsOptions = {
-  origin: [
-    'http://localhost:3000', // Development
-    'https://smart-fit-ar.vercel.app', // Your Vercel frontend
-    'https://smart-fit-ar-git-main-paulos-projects-3f9d8f2a.vercel.app', // Vercel preview
-    'https://smart-fit-ar-*.vercel.app' // All Vercel preview deployments
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001', 
+      'https://smart-fit-ar.vercel.app',
+      'https://smart-fit-ar-git-main-paulos-projects-3f9d8f2a.vercel.app',
+      /\.vercel\.app$/ // Allow all Vercel deployments
+    ];
+    
+    if (allowedOrigins.some(allowedOrigin => {
+      if (typeof allowedOrigin === 'string') {
+        return origin === allowedOrigin;
+      } else if (allowedOrigin instanceof RegExp) {
+        return allowedOrigin.test(origin);
+      }
+      return false;
+    })) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  optionsSuccessStatus: 200
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
+
 app.use(cors(corsOptions));
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 
 // ==================== EMPLOYEE BATCH GENERATION ====================

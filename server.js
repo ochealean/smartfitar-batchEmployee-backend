@@ -44,7 +44,7 @@ app.use(express.json());
  */
 app.post('/api/generate-employees', async (req, res) => {
   try {
-    const { shopId, employeeData, shopOwnerId } = req.body; // Removed count
+    const { shopId, shopOwnerId, employeeData } = req.body; // employeeData now contains count
 
     // Validate request
     if (!shopId || !shopOwnerId) {
@@ -68,11 +68,11 @@ app.post('/api/generate-employees', async (req, res) => {
     const employees = [];
     const errors = [];
 
-    // Get the domain from employeeData or use default
-    const domain = employeeData.domain || 'yourcompany.com';
+    // Get count from employeeData (default to 1 if not specified)
+    const count = employeeData.count || 1;
     
-    // Get count from employeeData or use default
-    const count = employeeData.count || 1; // Default to 1 if not specified
+    // Get domain from employeeData or use default
+    const domain = employeeData.domain || 'yourcompany.com';
 
     if (count > 50) {
       return res.status(400).json({
@@ -117,6 +117,9 @@ app.post('/api/generate-employees', async (req, res) => {
           lastUpdated: new Date().toISOString(),
           isBatchGenerated: true
         };
+
+        // Remove count from employee record before saving (we don't want to store it)
+        delete employeeRecord.count;
 
         // Save to database
         await admin.database().ref(`smartfit_AR_Database/employees/${userRecord.uid}`).set(employeeRecord);

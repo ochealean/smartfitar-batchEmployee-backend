@@ -44,20 +44,13 @@ app.use(express.json());
  */
 app.post('/api/generate-employees', async (req, res) => {
   try {
-    const { shopId, count, employeeData, shopOwnerId } = req.body;
+    const { shopId, employeeData, shopOwnerId } = req.body; // Removed count
 
     // Validate request
-    if (!shopId || !count || !shopOwnerId) {
+    if (!shopId || !shopOwnerId) {
       return res.status(400).json({
         success: false,
-        error: "Missing required fields: shopId, count, shopOwnerId"
-      });
-    }
-
-    if (count > 50) {
-      return res.status(400).json({
-        success: false,
-        error: "Cannot generate more than 50 employees at once"
+        error: "Missing required fields: shopId, shopOwnerId"
       });
     }
 
@@ -75,17 +68,31 @@ app.post('/api/generate-employees', async (req, res) => {
     const employees = [];
     const errors = [];
 
+    // Get the domain from employeeData or use default
+    const domain = employeeData.domain || 'yourcompany.com';
+    
+    // Get count from employeeData or use default
+    const count = employeeData.count || 1; // Default to 1 if not specified
+
+    if (count > 50) {
+      return res.status(400).json({
+        success: false,
+        error: "Cannot generate more than 50 employees at once"
+      });
+    }
+
     for (let i = 0; i < count; i++) {
       try {
         const employeeNumber = i + 1;
-        const email = `employee${employeeNumber}.${shopId}@smartfit.internal`;
-        const password = generatePassword(); // 8-character random password
+        const username = `employee${employeeNumber}`;
+        const email = `${username}@${domain}`;
+        const password = generatePassword();
 
         // Create user in Firebase Authentication
         const userRecord = await admin.auth().createUser({
           email: email,
           password: password,
-          emailVerified: true, // Internal accounts, no email verification needed
+          emailVerified: true,
           disabled: false
         });
 
@@ -96,9 +103,9 @@ app.post('/api/generate-employees', async (req, res) => {
           shopId: shopId,
           shopOwnerId: shopOwnerId,
           email: email,
-          temporaryPassword: password, // Store temporarily for distribution
+          temporaryPassword: password,
           employeeId: `EMP${shopId.slice(-4).toUpperCase()}${employeeNumber.toString().padStart(3, '0')}`,
-          role: 'employee',
+          role: employeeData.role || 'employee',
           status: 'active',
           permissions: employeeData.permissions || [
             'view_products',

@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin (your existing code)
+// Initialize Firebase Admin using environment variables
 admin.initializeApp({
   credential: admin.credential.cert({
     type: "service_account",
@@ -23,43 +23,18 @@ admin.initializeApp({
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// FIXED CORS Configuration
+// Middleware - Updated CORS for production
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:3001', 
-      'https://smart-fit-ar.vercel.app',
-      'https://smart-fit-ar-git-main-paulos-projects-3f9d8f2a.vercel.app',
-      /\.vercel\.app$/ // Allow all Vercel deployments
-    ];
-    
-    if (allowedOrigins.some(allowedOrigin => {
-      if (typeof allowedOrigin === 'string') {
-        return origin === allowedOrigin;
-      } else if (allowedOrigin instanceof RegExp) {
-        return allowedOrigin.test(origin);
-      }
-      return false;
-    })) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: [
+    'http://localhost:3000', // Development
+    'https://smart-fit-ar.vercel.app', // Your Vercel frontend
+    'https://smart-fit-ar-git-main-paulos-projects-3f9d8f2a.vercel.app', // Vercel preview
+    'https://smart-fit-ar-*.vercel.app' // All Vercel preview deployments
+  ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  optionsSuccessStatus: 200
 };
-
 app.use(cors(corsOptions));
-
-// Handle preflight requests
-app.options('*', cors(corsOptions));
-
 app.use(express.json());
 
 // ==================== EMPLOYEE BATCH GENERATION ====================
@@ -69,7 +44,7 @@ app.use(express.json());
  */
 app.post('/api/generate-employees', async (req, res) => {
   try {
-    const { shopId, shopOwnerId, employeeData } = req.body;
+    const { shopId, shopOwnerId, employeeData } = req.body; // employeeData now contains count
 
     // Validate request
     if (!shopId || !shopOwnerId) {
@@ -95,8 +70,9 @@ app.post('/api/generate-employees', async (req, res) => {
 
     // Get count from employeeData (default to 1 if not specified)
     const count = employeeData.count || 1;
+    
+    // Get domain from employeeData or use default
     const domain = employeeData.domain || 'yourcompany.com';
-    const role = employeeData.role || 'employee';
 
     if (count > 50) {
       return res.status(400).json({
@@ -105,33 +81,12 @@ app.post('/api/generate-employees', async (req, res) => {
       });
     }
 
-    // Get the last employee number for this shop to avoid duplicates
-    const lastEmployeeRef = admin.database().ref(`smartfit_AR_Database/shop/${shopId}/lastEmployeeNumber`);
-    const lastEmployeeSnapshot = await lastEmployeeRef.once('value');
-    let lastEmployeeNumber = lastEmployeeSnapshot.exists() ? lastEmployeeSnapshot.val() : 0;
-
-    let createdCount = 0;
-    let currentEmployeeNumber = lastEmployeeNumber + 1;
-
-    while (createdCount < count) {
+    for (let i = 0; i < count; i++) {
       try {
-        const username = `employee${currentEmployeeNumber}`;
+        const employeeNumber = i + 1;
+        const username = `employee${employeeNumber}`;
         const email = `${username}@${domain}`;
         const password = generatePassword();
-
-        // Check if email already exists in Firebase Auth
-        try {
-          await admin.auth().getUserByEmail(email);
-          // If we reach here, email exists - skip to next number
-          console.log(`Email ${email} already exists, trying next number`);
-          currentEmployeeNumber++;
-          continue;
-        } catch (error) {
-          // Email doesn't exist - this is what we want
-          if (error.code !== 'auth/user-not-found') {
-            throw error;
-          }
-        }
 
         // Create user in Firebase Authentication
         const userRecord = await admin.auth().createUser({
@@ -143,25 +98,28 @@ app.post('/api/generate-employees', async (req, res) => {
 
         // Create employee record in Realtime Database
         const employeeRecord = {
-          name: `Employee ${currentEmployeeNumber}`,
-          role: role,
-          permissions: employeeData.permissions || [
-            'view_products',
-            'manage_orders',
-            'view_inventory'
-          ],
+          ...employeeData,
           id: userRecord.uid,
           shopId: shopId,
           shopOwnerId: shopOwnerId,
           email: email,
           temporaryPassword: password,
-          employeeId: `EMP${shopId.slice(-4).toUpperCase()}${currentEmployeeNumber.toString().padStart(3, '0')}`,
+          employeeId: `EMP${shopId.slice(-4).toUpperCase()}${employeeNumber.toString().padStart(3, '0')}`,
+          role: employeeData.role || 'employee',
           status: 'active',
+          permissions: employeeData.permissions || [
+            'view_products',
+            'manage_orders',
+            'view_inventory'
+          ],
           dateCreated: new Date().toISOString(),
           createdBy: shopOwnerId,
           lastUpdated: new Date().toISOString(),
           isBatchGenerated: true
         };
+
+        // Remove count from employee record before saving (we don't want to store it)
+        delete employeeRecord.count;
 
         // Save to database
         await admin.database().ref(`smartfit_AR_Database/employees/${userRecord.uid}`).set(employeeRecord);
@@ -182,28 +140,13 @@ app.post('/api/generate-employees', async (req, res) => {
           status: 'created'
         });
 
-        createdCount++;
-        currentEmployeeNumber++;
-
       } catch (error) {
-        if (error.code === 'auth/email-already-exists') {
-          // Email exists, try next number
-          console.log(`Email conflict, trying next number: ${error.message}`);
-          currentEmployeeNumber++;
-        } else {
-          errors.push({
-            employeeNumber: currentEmployeeNumber,
-            error: error.message
-          });
-          console.error(`Failed to create employee ${currentEmployeeNumber}:`, error);
-          currentEmployeeNumber++;
-        }
+        errors.push({
+          employeeNumber: i + 1,
+          error: error.message
+        });
+        console.error(`Failed to create employee ${i + 1}:`, error);
       }
-    }
-
-    // Update the last employee number in database
-    if (createdCount > 0) {
-      await lastEmployeeRef.set(currentEmployeeNumber - 1);
     }
 
     // Log the batch creation
